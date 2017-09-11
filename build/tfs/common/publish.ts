@@ -140,8 +140,19 @@ async function uploadBlob(blobService: azure.BlobService, quality: string, blobN
 		}
 	};
 
+	console.log(`Uploading ${file} as ${blobName}`);
 	await new Promise((c, e) => blobService.createBlockBlobFromLocalFile(quality, blobName, file, blobOptions, err => err ? e(err) : c()));
-	await new Promise((c, e) => blobService.createBlockBlobFromLocalFile(quality, 'configuration.json', configDetailsPath, blobOptions, err => err ? e(err) : c()));
+	if (configDetailsPath) {
+		console.log(`Uploading ${configDetailsPath}`);
+		const blobOptions: azure.BlobService.CreateBlockBlobRequestOptions = {
+			contentSettings: {
+				contentType: mime.lookup(configDetailsPath),
+				cacheControl: 'max-age=31536000, public'
+			}
+		};
+		console.log(`Uploading ${configDetailsPath}`);
+		await new Promise((c, e) => blobService.createBlockBlobFromLocalFile(quality, 'configuration.json', configDetailsPath, blobOptions, err => err ? e(err) : c()));
+	}
 }
 
 interface PublishOptions {
@@ -254,7 +265,7 @@ async function publish(commit: string, quality: string, platform: string, type: 
 
 async function getDefaultConfigDump(): Promise<string> {
 	if (os.platform() === 'darwin') {
-		const configDetailsPath = path.join(os.tmpdir(), Date.now() + '_config.json');
+		const configDetailsPath = path.join(os.tmpdir(), 'configuration.json');
 		return new Promise<string>(resolve => {
 			const codeProc = exec('./scripts/code.sh --dumpDefaultConfiguration=' + configDetailsPath);
 			codeProc.on('exit', code => {
