@@ -5,8 +5,10 @@
 
 'use strict';
 
+import * as os from 'os';
+import * as path from 'path';
 import * as fs from 'fs';
-import { execSync } from 'child_process';
+import { execSync, exec } from 'child_process';
 import { Readable } from 'stream';
 import * as crypto from 'crypto';
 import * as azure from 'azure-storage';
@@ -130,7 +132,7 @@ async function doesAssetExist(blobService: azure.BlobService, quality: string, b
 	return existsResult.exists;
 }
 
-async function uploadBlob(blobService: azure.BlobService, quality: string, blobName: string, file: string): Promise<void> {
+async function uploadBlob(blobService: azure.BlobService, quality: string, blobName: string, file: string, configDetailsPath: string): Promise<void> {
 	const blobOptions: azure.BlobService.CreateBlockBlobRequestOptions = {
 		contentSettings: {
 			contentType: mime.lookup(file),
@@ -139,13 +141,14 @@ async function uploadBlob(blobService: azure.BlobService, quality: string, blobN
 	};
 
 	await new Promise((c, e) => blobService.createBlockBlobFromLocalFile(quality, blobName, file, blobOptions, err => err ? e(err) : c()));
+	await new Promise((c, e) => blobService.createBlockBlobFromLocalFile(quality, 'configuration.json', configDetailsPath, blobOptions, err => err ? e(err) : c()));
 }
 
 interface PublishOptions {
 	'upload-only': boolean;
 }
 
-async function publish(commit: string, quality: string, platform: string, type: string, name: string, version: string, _isUpdate: string, file: string, opts: PublishOptions): Promise<void> {
+async function publish(commit: string, quality: string, platform: string, type: string, name: string, version: string, _isUpdate: string, file: string, opts: PublishOptions, configDetailsPath: string): Promise<void> {
 	const isUpdate = _isUpdate === 'true';
 
 	const queuedBy = process.env['BUILD_QUEUEDBY'];
@@ -196,11 +199,11 @@ async function publish(commit: string, quality: string, platform: string, type: 
 	const promises = [];
 
 	if (!blobExists) {
-		promises.push(uploadBlob(blobService, quality, blobName, file));
+		promises.push(uploadBlob(blobService, quality, blobName, file, configDetailsPath));
 	}
 
 	if (!moooncakeBlobExists) {
-		promises.push(uploadBlob(mooncakeBlobService, quality, blobName, file));
+		promises.push(uploadBlob(mooncakeBlobService, quality, blobName, file, configDetailsPath));
 	}
 
 	if (promises.length === 0) {
@@ -249,6 +252,20 @@ async function publish(commit: string, quality: string, platform: string, type: 
 	await createOrUpdate(commit, quality, platform, type, release, asset, isUpdate);
 }
 
+async function getDefaultConfigDump(): Promise<string> {
+	if (os.platform() === 'darwin') {
+		const configDetailsPath = path.join(os.tmpdir(), Date.now() + '_config.json');
+		return new Promise<string>(resolve => {
+			const codeProc = exec('./scripts/code.sh --dumpDefaultConfiguration=' + configDetailsPath);
+			codeProc.on('exit', code => {
+				resolve(configDetailsPath);
+			});
+		});
+	}
+
+	return Promise.resolve(null);
+}
+
 function main(): void {
 	const opts = minimist<PublishOptions>(process.argv.slice(2), {
 		boolean: ['upload-only']
@@ -257,7 +274,9 @@ function main(): void {
 	const [quality, platform, type, name, version, _isUpdate, file] = opts._;
 	const commit = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
 
-	publish(commit, quality, platform, type, name, version, _isUpdate, file, opts).catch(err => {
+	getDefaultConfigDump().then(configDetailsPath => {
+		return publish(commit, quality, platform, type, name, version, _isUpdate, file, opts, configDetailsPath);
+	}).catch(err => {
 		console.error(err);
 		process.exit(1);
 	});
