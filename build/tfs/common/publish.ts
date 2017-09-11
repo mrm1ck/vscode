@@ -143,6 +143,7 @@ async function uploadBlob(blobService: azure.BlobService, quality: string, blobN
 	console.log(`Uploading ${file} as ${blobName}`);
 	await new Promise((c, e) => blobService.createBlockBlobFromLocalFile(quality, blobName, file, blobOptions, err => err ? e(err) : c()));
 	if (configDetailsPath) {
+		const name = blobName.split('/')[0] + '/configuration.json';
 		console.log(`Uploading ${configDetailsPath}`);
 		const blobOptions: azure.BlobService.CreateBlockBlobRequestOptions = {
 			contentSettings: {
@@ -150,8 +151,7 @@ async function uploadBlob(blobService: azure.BlobService, quality: string, blobN
 				cacheControl: 'max-age=31536000, public'
 			}
 		};
-		console.log(`Uploading ${configDetailsPath}`);
-		await new Promise((c, e) => blobService.createBlockBlobFromLocalFile(quality, 'configuration.json', configDetailsPath, blobOptions, err => err ? e(err) : c()));
+		await new Promise((c, e) => blobService.createBlockBlobFromLocalFile(quality, name, configDetailsPath, blobOptions, err => err ? e(err) : c()));
 	}
 }
 
