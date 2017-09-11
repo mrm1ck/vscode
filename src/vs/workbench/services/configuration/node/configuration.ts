@@ -15,7 +15,7 @@ import * as errors from 'vs/base/common/errors';
 import * as collections from 'vs/base/common/collections';
 import { Disposable, toDisposable, IDisposable, dispose } from 'vs/base/common/lifecycle';
 import { RunOnceScheduler } from 'vs/base/common/async';
-import { readFile, stat } from 'vs/base/node/pfs';
+import { readFile, stat, writeFile } from 'vs/base/node/pfs';
 import { IJSONContributionRegistry, Extensions as JSONExtensions } from 'vs/platform/jsonschemas/common/jsonContributionRegistry';
 import * as extfs from 'vs/base/node/extfs';
 import { IWorkspaceContextService, IWorkspace, Workspace, ILegacyWorkspace, LegacyWorkspace } from 'vs/platform/workspace/common/workspace';
@@ -34,6 +34,10 @@ import { ExtensionsRegistry, ExtensionMessageCollector } from 'vs/platform/exten
 import { IConfigurationNode, IConfigurationRegistry, Extensions, editorConfigurationSchemaId, IDefaultConfigurationExtension, validateProperty, ConfigurationScope, schemaId } from 'vs/platform/configuration/common/configurationRegistry';
 import { createHash } from 'crypto';
 import { getWorkspaceLabel, IWorkspacesService, IWorkspaceIdentifier, ISingleFolderWorkspaceIdentifier, isSingleFolderWorkspaceIdentifier, IStoredWorkspaceFolder } from 'vs/platform/workspaces/common/workspaces';
+import { IExtensionService } from 'vs/platform/extensions/common/extensions';
+import { ICommandService } from 'vs/platform/commands/common/commands';
+import product from 'vs/platform/node/product';
+import pkg from 'vs/platform/node/package';
 
 interface IStat {
 	resource: URI;
@@ -912,5 +916,83 @@ export class Configuration<T> extends BaseConfiguration<T> {
 		}
 
 		return true;
+	}
+}
+
+export class DefaultConfigurationDumpHelper {
+
+	constructor(
+		@IEnvironmentService environmentService: IEnvironmentService,
+		@IExtensionService private extensionService: IExtensionService,
+		@ICommandService private commandService: ICommandService) {
+		if (environmentService.args.dumpDefaultConfiguration) {
+			this.writeConfigModelAndQuit(environmentService.args.dumpDefaultConfiguration);
+		}
+	}
+
+	private writeConfigModelAndQuit(targetPath: string): TPromise<void> {
+		return this.extensionService.onReady()
+			.then(() => this.writeConfigModel(targetPath))
+			.then(() => this.commandService.executeCommand('workbench.action.quit'))
+			.then(() => { });
+	}
+
+	private writeConfigModel(targetPath: string): TPromise<void> {
+		const configurations = Registry.as<IConfigurationRegistry>(Extensions.Configuration).getConfigurations().slice();
+		const settings = [];
+		const processConfig = (config: IConfigurationNode) => {
+			if (config.properties) {
+				for (let name in config.properties) {
+					const prop = config.properties[name];
+					const propDetails: any = {
+						name,
+						title: prop.title,
+						description: prop.description,
+						default: prop.default,
+						type: prop.type
+					};
+
+					if (prop.enum) {
+						propDetails.enum = prop.enum;
+					}
+
+					if (prop.enumDescriptions) {
+						propDetails.enumDescriptions = prop.enumDescriptions;
+					}
+
+					settings.push(propDetails);
+				}
+			}
+
+			if (config.allOf) {
+				config.allOf.forEach(processConfig);
+			}
+		};
+
+		configurations.sort(this.compareConfigurationNodes)
+			.forEach(processConfig);
+
+		const result: any = { settings };
+		result.build_time = Date.now();
+		result.commit = product.commit;
+		result.version = pkg.version;
+
+		const resultString = JSON.stringify(result, undefined, '  ');
+		return writeFile(targetPath, resultString);
+	}
+
+	private compareConfigurationNodes(c1: IConfigurationNode, c2: IConfigurationNode): number {
+		if (typeof c1.order !== 'number') {
+			return 1;
+		}
+		if (typeof c2.order !== 'number') {
+			return -1;
+		}
+		if (c1.order === c2.order) {
+			const title1 = c1.title || '';
+			const title2 = c2.title || '';
+			return title1.localeCompare(title2);
+		}
+		return c1.order - c2.order;
 	}
 }
